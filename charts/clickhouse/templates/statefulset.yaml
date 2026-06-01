@@ -1,0 +1,101 @@
+{{- range .Values.shards }}
+{{- $shard := . }}
+{{- $shardFullname := printf "%s-%s" (include "clickhouse.fullname" $) $shard.name }}
+{{- $shardDnsName := include "clickhouse.shardDnsName" (dict "ctx" $ "shard" $shard) }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $shardDnsName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" $ | nindent 4 }}
+    clickhouse/shard: {{ $shard.name }}
+spec:
+  serviceName: {{ $shardDnsName }}-headless
+  podManagementPolicy: Parallel
+  replicas: {{ $.Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "clickhouse.selectorLabels" $ | nindent 6 }}
+      clickhouse/shard: {{ $shard.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "clickhouse.selectorLabels" $ | nindent 8 }}
+        clickhouse/shard: {{ $shard.name }}
+    spec:
+      containers:
+        - name: clickhouse-server
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            - name: {{ $.Values.env.shardIndexVar }}
+              value: {{ quote $shard.index }}
+            - name: {{ $.Values.env.replicaVar }}
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: client
+              containerPort: {{ $.Values.ports.client }}
+              protocol: TCP
+            - name: http
+              containerPort: {{ $.Values.ports.http }}
+              protocol: TCP
+            - name: interserver
+              containerPort: {{ $.Values.ports.interserver }}
+              protocol: TCP
+            - name: prometheus
+              containerPort: {{ $.Values.ports.prometheus }}
+              protocol: TCP
+          volumeMounts:
+            - name: cluster-config
+              mountPath: /etc/clickhouse-server/config.d
+            - name: users-config
+              mountPath: /etc/clickhouse-server/users.d
+            - name: data
+              mountPath: /var/lib/clickhouse
+            - name: user-files
+              mountPath: /var/lib/clickhouse/user_files
+          livenessProbe:
+            tcpSocket:
+              port: client
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          {{- with $.Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: cluster-config
+          configMap:
+            name: {{ include "clickhouse.fullname" $ }}-cluster-config
+        - name: users-config
+          configMap:
+            name: {{ include "clickhouse.fullname" $ }}-users-config
+        - name: user-files
+          hostPath:
+            path: /data
+            type: DirectoryOrCreate
+  # PVCs are pre-created by pvc.yaml. volumeClaimTemplates is required for per-replica
+  # binding — pvc.yaml is the authoritative definition.
+  # The controller generates PVC names as <template-name>-<statefulset-name>-<ordinal>.
+  # ref: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#stable-storage
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ $.Values.persistence.size }}
+{{- end }}

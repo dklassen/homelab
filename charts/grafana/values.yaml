@@ -1,0 +1,52 @@
+grafana:
+  adminPassword: grafana
+
+  plugins:
+    - grafana-clickhouse-datasource
+
+  persistence:
+    enabled: true
+    existingClaim: grafana
+    size: 1Gi
+    storageClass: ""
+
+  ingress:
+    enabled: true
+    hosts:
+      - grafana.localhost
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://prometheus-server.monitoring.svc.cluster.local
+          isDefault: true
+          access: proxy
+        - name: ClickHouse
+          type: grafana-clickhouse-datasource
+          jsonData:
+            host: clickhouse-shard1.clickhouse.svc.cluster.local
+            port: 9000
+            username: default
+            defaultDatabase: default
+            protocol: native
+          secureJsonData:
+            password: ""
+
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: default
+          orgId: 1
+          folder: ""
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+  dashboardsConfigMaps:
+    default: grafana-dashboards

@@ -1,0 +1,54 @@
+{{- range .Values.shards }}
+{{- $shard := . }}
+{{- $shardFullname := printf "%s-%s" (include "clickhouse.fullname" $) $shard.name }}
+{{- $shardDnsName := include "clickhouse.shardDnsName" (dict "ctx" $ "shard" $shard) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $shardDnsName }}-headless
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" $ | nindent 4 }}
+    clickhouse/shard: {{ $shard.name }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "clickhouse.selectorLabels" $ | nindent 4 }}
+    clickhouse/shard: {{ $shard.name }}
+  ports:
+    - name: client
+      port: {{ $.Values.ports.client }}
+      targetPort: client
+    - name: http
+      port: {{ $.Values.ports.http }}
+      targetPort: http
+    - name: interserver
+      port: {{ $.Values.ports.interserver }}
+      targetPort: interserver
+    - name: prometheus
+      port: {{ $.Values.ports.prometheus }}
+      targetPort: prometheus
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $shardDnsName }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" $ | nindent 4 }}
+    clickhouse/shard: {{ $shard.name }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "clickhouse.selectorLabels" $ | nindent 4 }}
+    clickhouse/shard: {{ $shard.name }}
+  ports:
+    - name: client
+      port: {{ $.Values.ports.client }}
+      targetPort: client
+    - name: http
+      port: {{ $.Values.ports.http }}
+      targetPort: http
+{{- end }}

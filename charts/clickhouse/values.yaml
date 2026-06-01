@@ -1,0 +1,41 @@
+fullnameOverride: clickhouse
+dnsName: clickhouse
+
+clusterName: homelab-clickhouse
+
+shards:
+  - name: shard1
+    index: 1
+  - name: shard2
+    index: 2
+
+replicaCount: 2
+
+image:
+  repository: clickhouse/clickhouse-server
+  tag: "26.5"
+  pullPolicy: IfNotPresent
+
+ports:
+  client: 9000
+  http: 8123
+  interserver: 9009
+  prometheus: 9363
+
+keeper:
+  host: clickhouse-keeper
+  port: 9181
+
+auth:
+  username: default
+  password:
+
+persistence:
+  size: 10Gi
+  storageClass: ""
+
+env:
+  shardIndexVar: CH_SHARD_INDEX
+  replicaVar: CH_REPLICA
+
+resources: {}

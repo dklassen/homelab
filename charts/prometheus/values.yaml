@@ -1,0 +1,43 @@
+prometheus:
+  # Disable components not needed for homelab scraping
+  alertmanager:
+    enabled: false
+
+  prometheus-pushgateway:
+    enabled: false
+
+  kube-state-metrics:
+    enabled: true
+
+  prometheus-node-exporter:
+    enabled: true
+
+  server:
+    global:
+      scrape_interval: 15s
+    ingress:
+      enabled: true
+      hosts:
+        - prometheus.localhost
+
+  extraScrapeConfigs: |
+    - job_name: clickhouse
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names: [clickhouse]
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          action: keep
+          regex: clickhouse
+        - source_labels: [__meta_kubernetes_pod_name]
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_label_clickhouse_shard]
+          target_label: shard
+        - source_labels: [__address__]
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9363
+          target_label: __address__
+        - target_label: __metrics_path__
+          replacement: /metrics

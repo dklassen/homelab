@@ -1,0 +1,205 @@
+version: "3"
+
+vars:
+  CLUSTER_NAME: homelab-clickhouse
+  NAMESPACE: clickhouse
+  KEEPER_RELEASE: clickhouse-keeper
+  CH_RELEASE: clickhouse
+  CH_USER: default
+  CH_PASS:
+  MONITORING_NAMESPACE: monitoring
+  PROMETHEUS_RELEASE: prometheus
+  GRAFANA_RELEASE: grafana
+
+tasks:
+  ns:create:
+    desc: Ensure namespace exists
+    cmds:
+      - kubectl create namespace {{.NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+
+  cluster:create:
+    desc: Create k3d cluster from config (skips if already exists)
+    status:
+      - k3d cluster list | grep -q {{.CLUSTER_NAME}}
+    cmds:
+      - k3d cluster create --config k3d-config.yaml
+      - kubectl wait --for=condition=Ready nodes --all --timeout=90s
+
+  cluster:delete:
+    desc: Destroy k3d cluster
+    cmds:
+      - k3d cluster delete {{.CLUSTER_NAME}}
+
+  keeper:dry-run:
+    desc: Render ClickHouseKeeper manifests without applying
+    cmds:
+      - helm template {{.KEEPER_RELEASE}} ./charts/clickhouse-keeper --namespace {{.NAMESPACE}}
+
+  keeper:install:
+    desc: Install ClickHouseKeeper via Helm
+    deps: [ns:create]
+    cmds:
+      - >
+        helm upgrade --install {{.KEEPER_RELEASE}}
+        ./charts/clickhouse-keeper
+        --namespace {{.NAMESPACE}}
+        --wait --timeout 120s
+
+  keeper:restart:
+    desc: Delete all Keeper pods and let the StatefulSet recreate them immediately
+    cmds:
+      - kubectl delete pod -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse-keeper
+
+  keeper:uninstall:
+    desc: Uninstall ClickHouseKeeper (keeps PVCs)
+    cmds:
+      - helm uninstall {{.KEEPER_RELEASE}} --namespace {{.NAMESPACE}}
+
+  keeper:purge:
+    desc: Uninstall ClickHouseKeeper and delete PVCs
+    cmds:
+      - helm uninstall {{.KEEPER_RELEASE}} --namespace {{.NAMESPACE}} || true
+      - kubectl delete pvc -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse-keeper
+
+  ch:dry-run:
+    desc: Render ClickHouse manifests without applying
+    cmds:
+      - helm template {{.CH_RELEASE}} ./charts/clickhouse --namespace {{.NAMESPACE}}
+
+  ch:install:
+    desc: Install ClickHouse via Helm
+    deps: [ns:create]
+    cmds:
+      - >
+        helm upgrade --install {{.CH_RELEASE}}
+        ./charts/clickhouse
+        --namespace {{.NAMESPACE}}
+        --wait --timeout 180s
+
+  ch:uninstall:
+    desc: Uninstall ClickHouse (keeps PVCs)
+    cmds:
+      - helm uninstall {{.CH_RELEASE}} --namespace {{.NAMESPACE}}
+
+  ch:purge:
+    desc: Uninstall ClickHouse and delete PVCs
+    cmds:
+      - helm uninstall {{.CH_RELEASE}} --namespace {{.NAMESPACE}} || true
+      - kubectl delete pvc -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse
+
+  ch:status:
+    desc: Show ClickHouse pod and PVC status
+    cmds:
+      - kubectl get pods -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse -o wide
+      - kubectl get pvc -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse
+
+  ch:restart:
+    desc: Delete all ClickHouse pods and let StatefulSets recreate them
+    cmds:
+      - kubectl delete pod -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse
+
+  ch:logs:
+    desc: Follow logs for all ClickHouse pods
+    cmds:
+      - kubectl logs -n {{.NAMESPACE}} -l app.kubernetes.io/name=clickhouse --follow --prefix
+
+  ch:err:
+    desc: Print the ClickHouse error log from shard1-0
+    vars:
+      POD: '{{default "clickhouse-shard1-0" .POD}}'
+    cmds:
+      - kubectl exec -n {{.NAMESPACE}} {{.POD}} -- cat /var/log/clickhouse-server/clickhouse-server.err.log
+
+  ch:forward:
+    desc: Port-forward ClickHouse shard1 to localhost (native 9000, HTTP 8123)
+    vars:
+      POD: '{{default "clickhouse-shard1-0" .POD}}'
+    cmds:
+      - kubectl port-forward -n {{.NAMESPACE}} pod/{{.POD}} 9000:9000 8123:8123
+
+  monitoring:repos:
+    desc: Add Prometheus and Grafana Helm repos
+    cmds:
+      - helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      - helm repo add grafana https://grafana.github.io/helm-charts
+      - helm repo update
+
+  monitoring:deps:
+    desc: Pull upstream chart dependencies for Prometheus and Grafana wrapper charts
+    deps: [monitoring:repos]
+    cmds:
+      - helm dependency update ./charts/prometheus
+      - helm dependency update ./charts/grafana
+
+  monitoring:ns:create:
+    desc: Ensure monitoring namespace exists
+    cmds:
+      - kubectl create namespace {{.MONITORING_NAMESPACE}} --dry-run=client -o yaml | kubectl apply -f -
+
+  prometheus:install:
+    desc: Install Prometheus
+    deps: [monitoring:ns:create]
+    cmds:
+      - >
+        helm upgrade --install {{.PROMETHEUS_RELEASE}}
+        ./charts/prometheus
+        --namespace {{.MONITORING_NAMESPACE}}
+        --wait --timeout 120s
+
+  prometheus:uninstall:
+    desc: Uninstall Prometheus
+    cmds:
+      - helm uninstall {{.PROMETHEUS_RELEASE}} --namespace {{.MONITORING_NAMESPACE}}
+
+  grafana:install:
+    desc: Install Grafana
+    deps: [monitoring:ns:create]
+    cmds:
+      - >
+        helm upgrade --install {{.GRAFANA_RELEASE}}
+        ./charts/grafana
+        --namespace {{.MONITORING_NAMESPACE}}
+        --wait --timeout 120s
+
+  grafana:uninstall:
+    desc: Uninstall Grafana
+    cmds:
+      - helm uninstall {{.GRAFANA_RELEASE}} --namespace {{.MONITORING_NAMESPACE}}
+
+  grafana:backup:
+    desc: Export all Grafana dashboards to charts/grafana/dashboards/
+    vars:
+      GRAFANA_URL: 'http://admin:grafana@grafana.localhost:8080'
+    cmds:
+      - mkdir -p charts/grafana/dashboards
+      - |
+        for uid in $(curl -s {{.GRAFANA_URL}}/api/search?type=dash-db | jq -r '.[].uid'); do
+          title=$(curl -s {{.GRAFANA_URL}}/api/dashboards/uid/$uid | jq -r '.dashboard.title | gsub(" "; "-") | ascii_downcase')
+          echo "Exporting: $title ($uid)"
+          curl -s {{.GRAFANA_URL}}/api/dashboards/uid/$uid | jq '.dashboard' > charts/grafana/dashboards/$title.json
+        done
+
+  monitoring:install:
+    desc: Install Prometheus and Grafana
+    cmds:
+      - task: prometheus:install
+      - task: grafana:install
+
+  monitoring:uninstall:
+    desc: Uninstall Prometheus and Grafana
+    cmds:
+      - task: prometheus:uninstall
+      - task: grafana:uninstall
+
+  setup:
+    desc: Full setup — cluster + Keeper + ClickHouse + monitoring
+    cmds:
+      - task: cluster:create
+      - task: keeper:install
+      - task: ch:install
+      - task: monitoring:install
+
+  teardown:
+    desc: Destroy everything
+    cmds:
+      - task: cluster:delete

@@ -1,0 +1,19 @@
+fullnameOverride: clickhouse-keeper
+dnsName: clickhouse-keeper
+
+replicaCount: 3
+
+image:
+  repository: clickhouse/clickhouse-keeper
+  tag: "24.8"
+  pullPolicy: IfNotPresent
+
+service:
+  clientPort: 9181
+  raftPort: 9234
+
+persistence:
+  size: 5Gi
+  storageClass: ""  # empty = cluster default (local-path on k3d)
+
+resources: {}

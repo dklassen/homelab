@@ -1,0 +1,14 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: homelab-clickhouse
+servers: 1
+agents: 2
+volumes:
+  - volume: /Users/dana/Documents/Code/homelab-clickhouse/data:/data
+    nodeFilters:
+      - agent:*
+ports:
+  - port: 8080:80
+    nodeFilters:
+      - loadbalancer

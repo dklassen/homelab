@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "clickhouse.fullname" . }}-cluster-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clickhouse.labels" . | nindent 4 }}
+data:
+  remote_servers.xml: |
+    <clickhouse>
+        <remote_servers>
+            <{{ .Values.clusterName }}>
+                {{- range .Values.shards }}
+                {{- $shard := . }}
+                {{- $shardDnsName := include "clickhouse.shardDnsName" (dict "ctx" $ "shard" $shard) }}
+                <shard>
+                    <internal_replication>true</internal_replication>
+                    {{- range $i := until (int $.Values.replicaCount) }}
+                    <replica>
+                        <host>{{ $shardDnsName }}-{{ $i }}.{{ $shardDnsName }}-headless.{{ $.Release.Namespace }}.svc.cluster.local</host>
+                        <port>{{ $.Values.ports.client }}</port>
+                    </replica>
+                    {{- end }}
+                </shard>
+                {{- end }}
+            </{{ .Values.clusterName }}>
+        </remote_servers>
+    </clickhouse>
+
+  keeper.xml: |
+    <clickhouse>
+        <zookeeper>
+            <node>
+                <host>{{ .Values.keeper.host }}.{{ .Release.Namespace }}.svc.cluster.local</host>
+                <port>{{ .Values.keeper.port }}</port>
+            </node>
+        </zookeeper>
+    </clickhouse>
+
+  macros.xml: |
+    <clickhouse>
+        <macros>
+            <cluster>{{ .Values.clusterName }}</cluster>
+            <shard from_env="{{ .Values.env.shardIndexVar }}"/>
+            <replica from_env="{{ .Values.env.replicaVar }}"/>
+        </macros>
+    </clickhouse>
+
+  listen.xml: |
+    <clickhouse>
+        <listen_host>::</listen_host>
+    </clickhouse>
+
+  logger.xml: |
+    <clickhouse>
+        <logger>
+            <level>information</level>
+            <console>1</console>
+        </logger>
+    </clickhouse>
+
+  prometheus.xml: |
+    <clickhouse>
+        <prometheus>
+            <endpoint>/metrics</endpoint>
+            <port>{{ .Values.ports.prometheus }}</port>
+            <metrics>true</metrics>
+            <events>true</events>
+            <asynchronous_metrics>true</asynchronous_metrics>
+        </prometheus>
+    </clickhouse>
+
+  storage.xml: |
+    <clickhouse>
+        <storage_configuration>
+            <disks>
+                <hot><path>/var/lib/clickhouse/disks/hot/</path></hot>
+                <cold><path>/var/lib/clickhouse/disks/cold/</path></cold>
+            </disks>
+            <policies>
+                <tiered>
+                    <volumes>
+                        <hot>
+                            <disk>hot</disk>
+                        </hot>
+                        <cold>
+                            <disk>cold</disk>
+                        </cold>
+                    </volumes>
+                    <move_factor>0.67</move_factor>
+                </tiered>
+            </policies>
+        </storage_configuration>
+    </clickhouse>
