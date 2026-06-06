@@ -3,4 +3,3 @@ name: clickhouse
 description: ClickHouse — 2 shards, 2 replicas each
 type: application
 version: 0.1.0
-appVersion: "24.8"
