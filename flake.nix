@@ -24,8 +24,8 @@
 
           shellHook = ''
             echo "dev shell"
-            echo "  k3d     $(k3d version --short 2>/dev/null || echo n/a)"
-            echo "  kubectl $(kubectl version --client --short 2>/dev/null || echo n/a)"
+            echo "  k3d     $(k3d version 2>/dev/null | head -n 1 | awk '{print $3}' || echo n/a)"
+            echo "  kubectl $(kubectl version --client 2>/dev/null  | head -n 1 | awk '{print $3}' || echo n/a)"
             echo "  helm    $(helm version --short 2>/dev/null || echo n/a)"
             echo "  task    $(task --version 2>/dev/null || echo n/a)"
           '';
